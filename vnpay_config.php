@@ -9,5 +9,5 @@ return [
     // URL thanh toán sandbox
     'vnp_Url'        => 'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html',
     // URL VNPAY trả về sau khi thanh toán (phải trùng với cấu hình merchant)
-    'vnp_ReturnUrl'  => 'http://bxdat.infinityfreeapp.com/transaction_search.php',
+    'vnp_ReturnUrl'  => 'http://bxdat.infinityfreeapp.com/vnpay_return.php',
 ];

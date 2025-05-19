@@ -1,5 +1,8 @@
 <?php
 // vnpay_return.php - Xử lý kết quả trả về từ VNPay
+ini_set('display_errors', 1);
+ini_set('display_startup_errors', 1);
+error_reporting(E_ALL);
 
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
@@ -8,7 +11,7 @@ if (session_status() === PHP_SESSION_NONE) {
 require __DIR__ . '/db.php';
 
 // Lấy cấu hình VNPay
-$vnp_config = require_once('config_vnpay.php');
+$vnp_config = require_once('vnpay_config.php');
 
 // Hàm kiểm tra chữ ký hash từ VNPay
 function validateVnpayReturn($vnp_config) {
@@ -71,6 +74,9 @@ $vnp_BankCode = $_GET['vnp_BankCode'] ?? '';
 $vnp_BankTranNo = $_GET['vnp_BankTranNo'] ?? '';
 $vnp_PayDate = $_GET['vnp_PayDate'] ?? '';
 
+// Log thông tin callback
+error_log("VNPAY Callback - Order ID: $vnp_TxnRef, Response Code: $vnp_ResponseCode, Amount: $vnp_Amount");
+
 include 'templates/header.php';
 ?>
 
@@ -85,7 +91,16 @@ include 'templates/header.php';
                     <?php
                     // Kiểm tra chữ ký và mã trạng thái trả về
                     if (validateVnpayReturn($vnp_config)) {
-                        if ($vnp_ResponseCode == '00' && $vnp_TransactionStatus == '00') {
+                        error_log("VNPAY Callback - Hash validation successful");
+                        
+                        // Kiểm tra trạng thái hiện tại của đơn hàng
+                        $stmt = $pdo->prepare("SELECT status FROM orders WHERE id = ?");
+                        $stmt->execute([$vnp_TxnRef]);
+                        $currentStatus = $stmt->fetchColumn();
+                        error_log("VNPAY Callback - Current order status: $currentStatus");
+                        
+                        if ($vnp_ResponseCode === '00') {
+                            error_log("VNPAY Callback - Payment successful");
                             // Thanh toán thành công
                             echo '<div class="alert alert-success">Thanh toán thành công!</div>';
                             
@@ -98,15 +113,16 @@ include 'templates/header.php';
                                         vnp_bank_code = ?,
                                         vnp_bank_tran_no = ?,
                                         vnp_pay_date = ?
-                                    WHERE id = ?
+                                    WHERE id = ? AND status != 'PAID'
                                 ");
-                                $stmt->execute([
+                                $result = $stmt->execute([
                                     $vnp_ResponseCode,
                                     $vnp_BankCode,
                                     $vnp_BankTranNo,
                                     $vnp_PayDate,
                                     $vnp_TxnRef
                                 ]);
+                                error_log("VNPAY Callback - Update status result: " . ($result ? "success" : "failed"));
                                 
                                 // Hiển thị thông tin đơn hàng
                                 $orderId = $vnp_TxnRef;
@@ -164,39 +180,52 @@ include 'templates/header.php';
                             } catch (Exception $e) {
                                 echo '<div class="alert alert-danger">Lỗi cập nhật trạng thái đơn hàng: ' . $e->getMessage() . '</div>';
                             }
-                            
                         } else {
+                            error_log("VNPAY Callback - Payment failed with code: $vnp_ResponseCode");
                             // Thanh toán thất bại
                             $errorMessage = getVnpayErrorMessage($vnp_ResponseCode);
                             echo '<div class="alert alert-danger">Thanh toán thất bại! ' . $errorMessage . '</div>';
                             
                             // Cập nhật trạng thái đơn hàng
                             try {
+                                $status = ($vnp_ResponseCode === '24') ? 'CANCELED' : 'FAILED';
+                                error_log("VNPAY Callback - Updating order status to: $status");
+                                
                                 $stmt = $pdo->prepare("
                                     UPDATE orders 
-                                    SET status = 'FAILED', 
+                                    SET status = ?, 
                                         vnp_response_code = ?
-                                    WHERE id = ?
+                                    WHERE id = ? AND status != 'PAID'
                                 ");
-                                $stmt->execute([$vnp_ResponseCode, $vnp_TxnRef]);
+                                $result = $stmt->execute([$status, $vnp_ResponseCode, $vnp_TxnRef]);
+                                error_log("VNPAY Callback - Update status result: " . ($result ? "success" : "failed"));
                             } catch (Exception $e) {
+                                error_log("VNPAY Callback - Error updating status: " . $e->getMessage());
                                 echo '<div class="alert alert-danger">Lỗi cập nhật trạng thái đơn hàng: ' . $e->getMessage() . '</div>';
                             }
                         }
                     } else {
+                        error_log("VNPAY Callback - Invalid hash");
                         // Chữ ký không hợp lệ
                         echo '<div class="alert alert-danger">Dữ liệu không hợp lệ!</div>';
                     }
                     ?>
                     
                     <div class="text-center mt-4">
-                        <a href="index.php" class="btn btn-primary">Về trang chủ</a>
+                        <a href="transaction_search.php" class="btn btn-primary">Xem lịch sử giao dịch</a>
+                        <a href="index.php" class="btn btn-secondary">Về trang chủ</a>
                     </div>
                 </div>
             </div>
         </div>
     </div>
-    
 </main>
 
 <?php include 'templates/footer.php'; ?>
+
+<!-- Tự động chuyển về trang lịch sử giao dịch sau 3 giây -->
+<script>
+    setTimeout(function() {
+        window.location.href = "transaction_search.php";
+    }, 3000);
+</script>
